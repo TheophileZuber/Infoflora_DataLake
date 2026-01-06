@@ -187,5 +187,9 @@ parameter_presence_absence <- parameterID_presence_absence %>%
   )
 
 setwd("~/MasterBec/InfoFlora_stage/Infoflora_DataLake")
-save(lake_parameters_summary,presence_absence,parameterID_presence_absence, file = "data/presence_absence.RData")
-load("data/presence_absence.RData")
+save(lake_parameters_summary,presence_absence,parameterID_presence_absence,parameter_presence_absence, file = "data/presence_absence.RData")
+# load("data/presence_absence.RData")
+
+#' Get the start and end date of sampling as well as estimating the frequency 
+#' via files metadata then look at doing that more accuretly by going through files?
+#' Then try to do the same table for files with no link to lake id
