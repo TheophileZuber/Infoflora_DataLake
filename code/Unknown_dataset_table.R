@@ -27,7 +27,9 @@ SUB_ids_only_in_files <- files_metadata %>% filter(datasets_id %in% ids_only_in_
 # keep only the ids that are not found in the datasets metadata
 datasets_id <- unique(SUB_ids_only_in_files$datasets_id)
 datasets_id <- na.omit(datasets_id)
-
+# Select rows where at least one of the 4 columns (cfnames,description,characteristic,unit) is NOT NA
+parameters <- selectiontables_metadata %>%
+  filter(if_any(c(3:6), ~!is.na(.)))
 ###' Create a table for unkown datasets (no lake ids in metadata) 
 ###' with presence and absence of parameters
 
@@ -168,6 +170,8 @@ dataset_time_summary <- files_metadata %>%
     )
   )
 
+pa_long$datasets_id <- as.numeric(pa_long$datasets_id)
+dataset_time_summary$datasets_id <- as.numeric(dataset_time_summary$datasets_id)
 # add it to the futur table
 pa_summary_fixed <- pa_long %>%
   left_join(dataset_time_summary, by = "datasets_id") %>%
@@ -200,5 +204,5 @@ pa_final <- pa_nested %>%
     names_from = parameter,
     values_from = metadata
   )
-#save(pa_final, pa_nested,pa_summary_fixed,file = "results/presence_absence.RData" )
+save(pa_final, pa_nested,pa_summary_fixed,file = "results/Unkown_lakes_parameters_metadata.RData" )
 
