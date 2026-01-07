@@ -238,8 +238,8 @@ pa_long <- pa_long %>%
 dataset_time_summary <- files_metadata %>%
   filter(!is.na(mindatetime), !is.na(maxdatetime)) %>%
   mutate(
-    mindatetime = as.POSIXct(mindatetime, tz = "UTC"),
-    maxdatetime = as.POSIXct(maxdatetime, tz = "UTC")
+    mindatetime = as.POSIXct(mindatetime,tz = "UTC"),
+    maxdatetime = as.POSIXct(maxdatetime,tz = "UTC")
   ) %>%
   group_by(datasets_id) %>%
   summarise(
@@ -259,9 +259,10 @@ dataset_time_summary <- files_metadata %>%
       avg_days_per_file < 365   ~ "monthly",
       avg_days_per_file < 730   ~ "yearly",
       TRUE                     ~ "sporadic"
-    )
-  )
-
+    ),
+start_date_fmt = format(start_date, "%Y-%m-%d"),
+end_date_fmt   = format(end_date,   "%Y-%m-%d")
+)
 # add it to the futur table
 
 pa_summary_fixed <- pa_long %>%
@@ -276,7 +277,7 @@ pa_summary_fixed <- pa_long %>%
 pa_with_metadata <- pa_summary_fixed %>%
   mutate(
     dataset_metadata = purrr::pmap(
-      list(datasets_id, start_date, end_date, frequency_estimated),
+      list(datasets_id, start_date_fmt, end_date_fmt, frequency_estimated),
       ~ list(
         dataset_id = ..1,
         start = ..2,

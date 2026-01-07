@@ -167,7 +167,9 @@ dataset_time_summary <- files_metadata %>%
       avg_days_per_file < 365   ~ "monthly",
       avg_days_per_file < 730   ~ "yearly",
       TRUE                     ~ "sporadic"
-    )
+    ),
+    start_date_fmt = format(start_date, "%Y-%m-%d"),
+    end_date_fmt   = format(end_date,   "%Y-%m-%d")
   )
 
 pa_long$datasets_id <- as.numeric(pa_long$datasets_id)
@@ -184,7 +186,7 @@ pa_summary_fixed <- pa_long %>%
 pa_nested <- pa_summary_fixed %>%
   mutate(
     dataset_metadata = purrr::pmap(
-      list(start_date, end_date, frequency_estimated),
+      list(start_date_fmt, end_date_fmt, frequency_estimated),
       ~ list(
         start = ..1,
         end   = ..2,
