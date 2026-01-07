@@ -116,7 +116,7 @@ save(Unk_datasets_parameter_presence_absence, file = "data/Unk_datasets_presence
 ###' Create a table with instead of presence and absence, the metadata for each
 ###' files and parameters are stored in a list. Therefore we have a table with 
 ###' unkown datasets'ids as columns, parameters as rows and metadata in cells 
-###' with the format: c(dataset id, starting date of sampling, end date, estimated 
+###' with the format: c(starting date of sampling, end date, estimated 
 ###' frequency of sampling).
 ###' One datasets has several files assigned that have each a starting and
 ###' ending date of sampling.

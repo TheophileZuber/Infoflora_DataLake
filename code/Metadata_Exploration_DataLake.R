@@ -8,9 +8,10 @@ library(jsonlite)
 Base_URL <- "https://api.datalakes-eawag.ch"
 
 ### Exploration metadata for the categories: datasets in Datalakes, 
-#' files metadata for given dataset,
-#' Datalakes look up tables
+#' The data has this structure: One lake has several datasets, and one dataset
+#' has several files. 
 
+### request the metadata for files, datasets and the parameters available in files 
 Endpoints <- c("/datasets","/files/","/selectiontables")
 
 for (i in Endpoints) {
@@ -35,19 +36,16 @@ for (i in Endpoints) {
 }
 
 #remove unecessary variables
-  rm(df, var_name, req_metadata, response,i)
-  
-### Access to metadata on the parameters for each dataset and creat summary table
+rm(df, var_name, req_metadata, response,i)
 
-##' "id" in datasets_metadata seems to correspond to "datasets_id" in files_metadata.
-##' First get shared datasets'id then look at lake_id in datasets_metadata 
-##' to have the lake name in selectiontables_metadata. 
-##' Then extract parameters for each lake and make a table. (with parameters id, name, units, link?)
-##' No time, frequency of sampling, etc in metadata => in datasets?
+### Access to metadata of the parameters for each files and create summary table
 
 
 # Get unique IDs from each dataset
-file_ids <- unique(files_metadata$datasets_id)
+#' datasets_id is the datasets'ids in files_metadata but 
+#' id is the datasets'ids in datasets_metadata
+
+file_ids <- unique(files_metadata$datasets_id) 
 dataset_ids <- unique(datasets_metadata$id)
 
 ### Find IDs in files_metadata but NOT in datasets_metadata 
@@ -58,9 +56,8 @@ ids_only_in_files
 # [47]   11   14 1261  601
 
 #subset to look at these specific IDs'rows
-SUB_ids_only_in_files <- files_metadata %>% filter(datasets_id == ids_only_in_files)
+SUB_ids_only_in_files <- files_metadata %>% filter(datasets_id %in% ids_only_in_files)
 setdiff(unique(SUB_ids_only_in_files$datasets_id),ids_only_in_files)
-#' datasets without metadata, lots of JSON files URL to download from web not through API
 
 ### Find IDs in datasets_metadata but NOT in files_metadata
 ids_only_in_datasets <- setdiff(dataset_ids, file_ids)
@@ -69,12 +66,19 @@ ids_only_in_datasets
 
 #subset to look at this specific ID's row
 SUB_ids_only_in_datasets <- datasets_metadata %>% filter(id == 1) #' Information on morphology of several lakes
- 
+
+#' In Files_metadata we have the files'ids and the dataset's id from which they are.
+#' In datasets_metadata we have datasets'ids and the lake's id to which they are linked.
+#' In selectiontables_metadata we have the lakes' ids and the lake's name attached to it.
+#' Thus the datasets IDs that are present in Files_metadata but not in datasets_metadata
+#' are unkown lakes. 
+
+
 # Take only the IDs present in both files and datasets
 datasets_id <- unique(files_metadata$datasets_id)
 datasets_id <- datasets_id[!(datasets_id %in% ids_only_in_files)]
 
-### subset of lakes and parameters
+### Create subset of lakes and parameters from selectiontables_metadata for later use
 
 lakes <- selectiontables_metadata[!is.na(selectiontables_metadata$elevation),]
 #add back Rhone and Rhein with NA elevation 
@@ -82,7 +86,7 @@ lakes <- rbind(lakes,selectiontables_metadata[selectiontables_metadata$name %in%
 
 # Select rows where at least one of the 4 columns (cfnames,description,characteristic,unit) is NOT NA
 parameters <- selectiontables_metadata %>%
-filter(if_any(c(3:6), ~!is.na(.)))
+  filter(if_any(c(3:6), ~!is.na(.)))
 
 ### Create table with lake names and parameters metadata
 
@@ -96,7 +100,7 @@ dataset_lake_map <- datasets_metadata %>%
 # Count datasets per lake
 Ndata_per_lake <- dataset_lake_map %>% 
   count(lake_name, sort = TRUE)
-# ONLY 44 LAKE WITH DATA?
+# Only 44 lakes, which correspond to the number of choice of downloadable data on the website
 
 
 # Create empty list to store results
@@ -190,12 +194,21 @@ setwd("~/MasterBec/InfoFlora_stage/Infoflora_DataLake")
 save(lake_parameters_summary,presence_absence,parameterID_presence_absence,parameter_presence_absence, file = "data/presence_absence.RData")
 #load("data/presence_absence.RData")
 
-#' Get the start and end date of sampling as well as estimating the frequency 
-#' via files metadata then look at doing that more accuretly by going through files?
-#' Then try to do the same table for files with no link to lake id
+###' Create a table with instead of presence and absence, where the metadata for each
+###' files and parameters are stored in a list. Therefore we have a table with 
+###' lakes as columns, parameters as rows and metadata in cells.
+###' with the format: c(dataset's id, starting date of sampling, end date, estimated 
+###' frequency of sampling).
+###' One datasets has several files assigned that have each a starting and
+###' ending date of sampling.
+###' There is one dataset for each combination of lake + parameter. 
+###' the frequency of sampling of a datasets is estimated as: 
+###' (end date - start date) / number of files
 
+## build the table with metadata 
 
 ### Add the timestamps
+
 pa_long <- parameter_presence_absence %>%
   pivot_longer(
     -lake,
@@ -205,27 +218,22 @@ pa_long <- parameter_presence_absence %>%
   filter(present == 1)
 
 # add parameter_id
+
 colnames(parameters)[2] <- "parameter"
 pa_long <- pa_long %>%
   left_join(parameters[,1:2], by = "parameter")
 colnames(pa_long)[4] <- "parameters_id"
 
 # add datasets id 
+
 pa_long <- pa_long %>%
-  left_join(lake_parameters_summary, by = c("lake","parameters_id"))
-
-
-pa_files <- pa_long %>%
   left_join(
-    files_metadata,
-    by = c(
-      "datasets_id" = "datasets_id",
-      "parameters_id" = "parameters_connectid"
-    )
-  ) 
+    dataset_lake_map %>% select(dataset_id, lake_name),
+    by = c("lake" = "lake_name")
+  ) %>%
+  rename(datasets_id = dataset_id)
 
-colnames(pa_files)[13] <- "files_id"
-
+# estimate the frequency of sampling
 
 dataset_time_summary <- files_metadata %>%
   filter(!is.na(mindatetime), !is.na(maxdatetime)) %>%
@@ -254,6 +262,8 @@ dataset_time_summary <- files_metadata %>%
     )
   )
 
+# add it to the futur table
+
 pa_summary_fixed <- pa_long %>%
   left_join(dataset_time_summary, by = "datasets_id") %>%
   mutate(
@@ -261,19 +271,28 @@ pa_summary_fixed <- pa_long %>%
   ) %>%
   filter(parameter != "Time")
 
+# create the list of metadata that will be present in every cell
 
-pa_nested <- pa_summary_fixed %>%
+pa_with_metadata <- pa_summary_fixed %>%
   mutate(
-    metadata = purrr::pmap(
-      list(start_date, end_date, frequency_estimated),
+    dataset_metadata = purrr::pmap(
+      list(datasets_id, start_date, end_date, frequency_estimated),
       ~ list(
-        start = ..1,
-        end   = ..2,
-        frequency = ..3
+        dataset_id = ..1,
+        start = ..2,
+        end = ..3,
+        frequency = ..4
       )
     )
-  ) %>%
-  select(lake, parameter, metadata)
+  )
+
+
+pa_nested <- pa_with_metadata %>%
+  group_by(lake, parameter) %>%
+  summarise(
+    metadata = list(dataset_metadata),
+    .groups = "drop"
+  )
 
 
 pa_final <- pa_nested %>%
@@ -281,5 +300,5 @@ pa_final <- pa_nested %>%
     names_from = parameter,
     values_from = metadata
   )
-#save(pa_final, pa_nested,pa_summary_fixed,file = "results/presence_absence.RData" )
 
+save(pa_final, pa_nested,pa_summary_fixed,file = "results/lake_parameters_metadata.RData" )
