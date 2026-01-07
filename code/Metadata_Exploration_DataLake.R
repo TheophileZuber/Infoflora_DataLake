@@ -32,11 +32,11 @@ for (i in Endpoints) {
   
   # Assign to global environment
   assign(var_name, df, envir = .GlobalEnv)
-  
-  #remove unecessary variables
-  rm(df, var_name, req_metadata, response,i)
 }
 
+#remove unecessary variables
+  rm(df, var_name, req_metadata, response,i)
+  
 ### Access to metadata on the parameters for each dataset and creat summary table
 
 ##' "id" in datasets_metadata seems to correspond to "datasets_id" in files_metadata.
@@ -188,8 +188,98 @@ parameter_presence_absence <- parameterID_presence_absence %>%
 
 setwd("~/MasterBec/InfoFlora_stage/Infoflora_DataLake")
 save(lake_parameters_summary,presence_absence,parameterID_presence_absence,parameter_presence_absence, file = "data/presence_absence.RData")
-# load("data/presence_absence.RData")
+#load("data/presence_absence.RData")
 
 #' Get the start and end date of sampling as well as estimating the frequency 
 #' via files metadata then look at doing that more accuretly by going through files?
 #' Then try to do the same table for files with no link to lake id
+
+
+### Add the timestamps
+pa_long <- parameter_presence_absence %>%
+  pivot_longer(
+    -lake,
+    names_to = "parameter",
+    values_to = "present"
+  ) %>%
+  filter(present == 1)
+
+# add parameter_id
+colnames(parameters)[2] <- "parameter"
+pa_long <- pa_long %>%
+  left_join(parameters[,1:2], by = "parameter")
+colnames(pa_long)[4] <- "parameters_id"
+
+# add datasets id 
+pa_long <- pa_long %>%
+  left_join(lake_parameters_summary, by = c("lake","parameters_id"))
+
+
+pa_files <- pa_long %>%
+  left_join(
+    files_metadata,
+    by = c(
+      "datasets_id" = "datasets_id",
+      "parameters_id" = "parameters_connectid"
+    )
+  ) 
+
+colnames(pa_files)[13] <- "files_id"
+
+
+dataset_time_summary <- files_metadata %>%
+  filter(!is.na(mindatetime), !is.na(maxdatetime)) %>%
+  mutate(
+    mindatetime = as.POSIXct(mindatetime, tz = "UTC"),
+    maxdatetime = as.POSIXct(maxdatetime, tz = "UTC")
+  ) %>%
+  group_by(datasets_id) %>%
+  summarise(
+    start_date = min(mindatetime),
+    end_date   = max(maxdatetime),
+    n_files    = n_distinct(id),
+    duration_days = as.numeric(difftime(end_date, start_date, units = "days")),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    avg_days_per_file = duration_days / n_files,
+    frequency_estimated = case_when(
+      avg_days_per_file < 1/24 ~ "minute-scale",
+      avg_days_per_file < 1    ~ "hourly",
+      avg_days_per_file < 7    ~ "daily",
+      avg_days_per_file < 30   ~ "weekly",
+      avg_days_per_file < 365   ~ "monthly",
+      avg_days_per_file < 730   ~ "yearly",
+      TRUE                     ~ "sporadic"
+    )
+  )
+
+pa_summary_fixed <- pa_long %>%
+  left_join(dataset_time_summary, by = "datasets_id") %>%
+  mutate(
+    has_time = !is.na(start_date)
+  ) %>%
+  filter(parameter != "Time")
+
+
+pa_nested <- pa_summary_fixed %>%
+  mutate(
+    metadata = purrr::pmap(
+      list(start_date, end_date, frequency_estimated),
+      ~ list(
+        start = ..1,
+        end   = ..2,
+        frequency = ..3
+      )
+    )
+  ) %>%
+  select(lake, parameter, metadata)
+
+
+pa_final <- pa_nested %>%
+  pivot_wider(
+    names_from = parameter,
+    values_from = metadata
+  )
+#save(pa_final, pa_nested,pa_summary_fixed,file = "results/presence_absence.RData" )
+
