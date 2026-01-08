@@ -90,8 +90,10 @@ parameters <- selectiontables_metadata %>%
 
 ### Create table with lake names and parameters metadata
 
+datasets_unique <- datasets_metadata %>%
+  distinct(id, .keep_all = TRUE)
 # Look at how many datasets per lakes
-dataset_lake_map <- datasets_metadata %>%
+dataset_lake_map <- datasets_unique %>%
   filter(id %in% datasets_id) %>%
   left_join(lakes %>% select(id, name), by = c("lakes_id" = "id")) %>%
   select(dataset_id = id, lakes_id, lake_name = name) %>%
@@ -100,6 +102,7 @@ dataset_lake_map <- datasets_metadata %>%
 # Count datasets per lake
 Ndata_per_lake <- dataset_lake_map %>% 
   count(lake_name, sort = TRUE)
+
 # Only 44 lakes, which correspond to the number of choice of downloadable data on the website
 
 
@@ -150,7 +153,7 @@ lake_parameters_summary <- map_df(names(data_list), function(lake_name) {
     select(lake, everything())
 })
 
-
+#save(lake_parameters_summary,datasets_metadata,files_metadata,selectiontables_metadata, file = "data/Metadata.Rdata")
 
 ### presence/absence table
 
@@ -190,9 +193,9 @@ parameter_presence_absence <- parameterID_presence_absence %>%
     .cols = matches("^\\d+$")  # Only columns that are purely numeric
   )
 
-setwd("~/MasterBec/InfoFlora_stage/Infoflora_DataLake")
-save(lake_parameters_summary,presence_absence,parameterID_presence_absence,parameter_presence_absence, file = "data/presence_absence.RData")
-#load("data/presence_absence.RData")
+# setwd("~/MasterBec/InfoFlora_stage/Infoflora_DataLake")
+# save(lake_parameters_summary,presence_absence,parameterID_presence_absence,parameter_presence_absence, file = "data/presence_absence.RData")
+# load("data/presence_absence.RData")
 
 ###' Create a table with instead of presence and absence, where the metadata for each
 ###' files and parameters are stored in a list. Therefore we have a table with 
@@ -302,4 +305,7 @@ pa_final <- pa_nested %>%
     values_from = metadata
   )
 
-save(pa_final, pa_nested,pa_summary_fixed,file = "results/lake_parameters_metadata.RData" )
+
+pa_final <- apply(pa_final,c(1,2),unlist)
+save(pa_final, pa_nested,pa_summary_fixed,file = "results/lake_parameters_metadata.RData")
+
