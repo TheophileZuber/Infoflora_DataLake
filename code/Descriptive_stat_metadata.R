@@ -11,7 +11,10 @@ rm(presence_absence,parameterID_presence_absence,parameter_presence_absence)
 
 load("data/Unk_datasets_presence_absence.RData")
 load("results/lake_parameters_metadata.RData")
-### FOR EACH PARAMETERS, WHICH ARE THE MOST PRESENT ACCROSS LAKES
+
+#################################
+### Lakes parameters coverage ###
+#################################
 
 Lake_parameter_coverage <- lake_presence_absence_parameters %>%
   summarise(across(-lake, sum)) %>%     # sum presence across lakes
@@ -41,20 +44,22 @@ parameter_coverage %>%
     title = "Number of parameters across lakes"
   )
 
-### num of files and datasets
+#################################
+### num of files and datasets ###
+#################################
 
-datasets_unique <- datasets_metadata %>%
-  distinct(id, .keep_all = TRUE)
-# Look at how many datasets per lakes
-dataset_lake_map <- datasets_unique %>%
-  filter(id %in% datasets_id) %>%
-  left_join(lakes %>% select(id, name), by = c("lakes_id" = "id")) %>%
-  select(dataset_id = id, lakes_id, lake_name = name) %>%
-  filter(!is.na(lake_name))
-
-# Count datasets per lake
-Ndatasets_per_lake <- dataset_lake_map %>% 
-  count(lake_name, sort = TRUE)
+# datasets_unique <- datasets_metadata %>%
+#   distinct(id, .keep_all = TRUE)
+# # Look at how many datasets per lakes
+# dataset_lake_map <- datasets_unique %>%
+#   filter(id %in% datasets_id) %>%
+#   left_join(lakes %>% select(id, name), by = c("lakes_id" = "id")) %>%
+#   select(dataset_id = id, lakes_id, lake_name = name) %>%
+#   filter(!is.na(lake_name))
+# 
+# # Count datasets per lake
+# Ndatasets_per_lake <- dataset_lake_map %>%
+#   count(lake_name, sort = TRUE)
 
 # # Look at how many files per lakes
 # files_lake_map <- files_metadata %>%
@@ -67,7 +72,10 @@ Ndatasets_per_lake <- dataset_lake_map %>%
 # Nfiles_per_lake <- files_lake_map %>% 
 #   count(lake_name, sort = TRUE)
 
-### Indice de dispersion des parametres
+###########################################
+### Indice de dispersion des parametres ###
+###########################################
+
 library(sf)
 
 # Get coordonnee for datasets and change into right crs
@@ -118,8 +126,6 @@ median_distances <- coord_with_centroid %>%
 parameters <- selectiontables_metadata %>%
   filter(if_any(c(3:6), ~!is.na(.)))
 
-# add parameters'name
-
 # Extract ALL rows involved in duplication (including first occurrence)
 test <- parameters[parameters$parameters_id %in% parameters$parameters_id[duplicated(parameters$parameters_id)], ]
 
@@ -130,60 +136,55 @@ colnames(parameters_2)[1] <- "parameters_id"
 Dispersion_ind <- median_distances %>%
   left_join(parameters_2[,1:2], by = "parameters_id")
 
-### Diverging bar charts
 
-# Prepare the data - normalize/scale the median_distance for better visualization
-Dispersion_ind_plot <- Dispersion_ind %>%
-  mutate(
-    # Scale median_distance to make it comparable with n_points
-    median_distance_scaled = scale(median_distance)[,1],
-    # Make one side negative for diverging effect
-    n_points_neg = -n_points,
-    # Reorder names by one of the variables for better readability
-    name = reorder(name, median_distance)
-  )
+# Parameters that are at least in 5 lakes 
 
-# Prepare the data
-Dispersion_ind_plot <- Dispersion_ind %>%
-  # Join with parameter_coverage to get n_lakes
-  left_join(parameter_coverage, by = c("name" = "parameter")) %>%
-  # Scale median_distance for better visualization
-  mutate(
-    median_distance_scaled = scale(median_distance)[,1],
-    # Make n_lakes negative for left side
-    n_lakes_neg = -n_lakes,
-    # Reorder by n_lakes or median_distance
-    name = reorder(name, n_lakes)
-  ) %>%
-  # Optional: take top 30 parameters
-  slice_max(n_lakes, n = 30)
+parameters_list <- subset(Lake_parameter_coverage,n_lakes > 5)
 
-# Create diverging bar chart
-ggplot(Dispersion_ind_plot, aes(y = name)) +
-  # Left side - number of lakes (negative)
-  geom_col(aes(x = n_lakes_neg), fill = "#2166ac", alpha = 0.8) +
-  # Right side - median distance (scaled)
-  geom_col(aes(x = median_distance_scaled), fill = "#b2182b", alpha = 0.8) +
-  # Add vertical line at zero
-  geom_vline(xintercept = 0, color = "black", linewidth = 0.5) +
-  # Labels and theme
+#make graph
+
+parameters_list %>%
+  # slice_max(n_lakes, n = 50) %>%
+  ggplot(aes(x = reorder(parameter, n_lakes), y = n_lakes)) +
+  geom_col() +
+  coord_flip() +
   labs(
-    x = "← Number of Lakes | Dispersion Index (scaled) →",
-    y = "Parameter",
-    title = "Parameter Coverage vs Spatial Dispersion"
-  ) +
-  theme_minimal() +
-  theme(
-    panel.grid.major.y = element_blank(),
-    axis.text.y = element_text(size = 8)
+    x = "Parameter",
+    y = "Number of lakes sampled",
+    title = "Number of parameters across lakes"
   )
-##############
-library(ggplot2)
-library(dplyr)
 
-# Create bar plot for dispersion only
-Dispersion_ind_plot %>%
-  slice_max(median_distance, n = 30) %>%  # Optional: top 50
+#####################################################################################
+### make dictionary of parameters ids and the different parameters under this ids ###
+#####################################################################################
+
+# get the name of the parse parameters per parameter
+
+parseparam_by_id <- lake_parameters_summary %>%
+  group_by(parameters_id) %>%
+  summarise(
+    parseparameters = sort(unique(parseparameter)),
+    .groups = "drop"
+  )
+
+parseparam_by_id <- lake_parameters_summary %>%
+  group_by(parameters_id) %>%
+  summarise(
+    parseparameters = paste(sort(unique(parseparameter)), collapse = ", "),
+    n_parseparameters = n_distinct(parseparameter),
+    .groups = "drop"
+  )
+
+#' make list with description of the parameters
+
+Potential_parameters <- left_join(parameters_list,parseparam_by_id, by = "parameters_id")
+Potential_parameters <- left_join(Potential_parameters,parameters_2[,c(1,4)], by = "parameters_id")
+Potential_parameters <- Potential_parameters[,-5]
+Potential_parameters <- subset(Potential_parameters, parameters_id != 145) # duplicate
+
+# plot the num of lakes, parse parameters and the index of dispersion
+
+Potential_parameters %>%
   ggplot(aes(x = reorder(name, median_distance), y = median_distance)) +
   geom_col(fill = "#b2182b", alpha = 0.8) +
   coord_flip() +
@@ -197,8 +198,112 @@ Dispersion_ind_plot %>%
     panel.grid.major.y = element_blank(),
     axis.text.y = element_text(size = 8)
   )
+
+Potential_parameters %>%
+  ggplot(aes(x = reorder(name, n_lakes), y = n_lakes)) +
+  geom_col(fill = "darkblue", alpha = 0.8) +
+  coord_flip() +
+  labs(
+    x = "Parameter",
+    y = "num of lakes",
+    title = "Lakes' presence of Parameters"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major.y = element_blank(),
+    axis.text.y = element_text(size = 8)
+  )
+
+Potential_parameters %>%
+  ggplot(aes(x = reorder(name, n_parseparameters), y = n_parseparameters)) +
+  geom_col(fill = "darkgreen", alpha = 0.8) +
+  coord_flip() +
+  labs(
+    x = "Parameter",
+    y = "nombre d'appelations",
+    title = "nombre d'appelations"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major.y = element_blank(),
+    axis.text.y = element_text(size = 8)
+  )
+
+# Heatmap avec valeurs normalisées par colonne
+
+Potential_parameters_normalized <- Potential_parameters %>%
+  mutate(
+    # Normaliser entre 0 et 1 pour chaque critère indépendamment
+    norm_distance = (median_distance - min(median_distance)) / 
+      (max(median_distance) - min(median_distance)),
+    norm_lakes = (n_lakes - min(n_lakes)) / 
+      (max(n_lakes) - min(n_lakes)),
+    norm_appelations = 1 - ((n_parseparameters - min(n_parseparameters)) / 
+                              (max(n_parseparameters) - min(n_parseparameters))),
+    score_moyen = (norm_distance + norm_lakes + norm_appelations) / 3
+  ) %>%
+  arrange(desc(score_moyen))
+
+# Créer une version long format avec valeurs réelles et normalisées
+heatmap_data <- Potential_parameters_normalized %>%
+  select(name, median_distance, n_lakes, n_parseparameters, 
+         norm_distance, norm_lakes, norm_appelations) %>%
+  tidyr::pivot_longer(cols = c(median_distance, n_lakes, n_parseparameters), 
+                      names_to = "critere", 
+                      values_to = "valeur_reelle") %>%
+  # Ajouter les valeurs normalisées
+  mutate(
+    valeur_norm = case_when(
+      critere == "median_distance" ~ Potential_parameters_normalized$norm_distance[match(name, Potential_parameters_normalized$name)],
+      critere == "n_lakes" ~ Potential_parameters_normalized$norm_lakes[match(name, Potential_parameters_normalized$name)],
+      critere == "n_parseparameters" ~ Potential_parameters_normalized$norm_appelations[match(name, Potential_parameters_normalized$name)]
+    ),
+    critere = recode(critere,
+                     "median_distance" = "Dispersion\n(médiane)",
+                     "n_lakes" = "Nombre\nde lacs",
+                     "n_parseparameters" = "Nombre\nd'appelations"
+    )
+  )
+
+# Ordonner selon le score moyen
+order_params <- Potential_parameters_normalized %>%
+  arrange(desc(score_moyen)) %>%
+  pull(name)
+
+heatmap_data %>%
+  mutate(name = factor(name, levels = order_params)) %>%
+  ggplot(aes(x = critere, y = name, fill = valeur_norm)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(aes(label = round(valeur_reelle, 0)), color = "black", size = 2) +
+  scale_fill_gradient2(
+    low = "#d73027", 
+    mid = "#ffffbf", 
+    high = "#1a9850",
+    midpoint = 0.5,
+    name = "Score\nnormalisé",
+    limits = c(0, 1)
+  ) +
+  labs(
+    x = "",
+    y = "Paramètre",
+    title = "Tous les paramètres (n=47) - Valeurs réelles avec couleurs normalisées",
+    subtitle = "Couleurs basées sur normalisation 0-1 par colonne. Valeurs = chiffres réels"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(size = 7),
+    axis.text.x = element_text(size = 9),
+    panel.grid = element_blank(),
+    legend.position = "right"
+  )
+
 ### SAVE IMPORTANT FILE TO SEND
 # load("results/lake_parameters_metadata.RData")
 # load("results/Parameters_metadata_per_lake_table.Rdata")
-Parameters_metadata_per_lake_table <- pa_final
-save(Parameters_metadata_per_lake_table, file = "results/Parameters_metadata_per_lake_table.Rdata")
+# Parameters_metadata_per_lake_table <- pa_final
+# save(Parameters_metadata_per_lake_table, file = "results/Parameters_metadata_per_lake_table.Rdata")
+
+library(openxlsx)
+
+# for writing a data.frame or list of data.frames to an xlsx file
+write.xlsx(Potential_parameters, 'results/list_of_potential_parameters.xlsx')
