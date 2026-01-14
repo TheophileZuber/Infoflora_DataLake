@@ -2,7 +2,9 @@
 library(tidyverse)
 library(httr2)
 library(jsonlite)
-
+library(ncdf4)
+library(purrr)
+library(tibble)
 
 #load metadata
 load("data/Metadata.Rdata")
@@ -14,131 +16,115 @@ load('results/list_of_potential_parameters.Rdata')
 # load("data/Unk_datasets_presence_absence.RData")
 # load("results/lake_parameters_metadata.RData")
 
-### Define base URL
-Base_URL <- "https://api.datalakes-eawag.ch/download/csv/"
-
-# define the parameter to downlaod
-par_id_to_dl <- 
-
-# get the datasets where the parameter is
-datasets_id_of_par <- lake_parameters_summary %>% 
-  filter(parameters_id %in% par_id_to_dl) %>%
-  unique(datasets_id)
-
-# get the files in the datasets where the parameter is
-Endpoints <- files_metadata %>% 
-  filter(datasets_id_of_par %in% datasets_id) %>%
-  unique(id)
-
-for (i in Endpoints) {
-  
-  #Define request
-  req_file <- request(paste0(Base_URL,i))
-  
-  # GET request and parse
-  response <- req_file %>% 
-    req_perform() %>%
-    resp_body_json()
-  
-  # Convert to dataframe
-  df <- bind_rows(response)
-  
-  # get the dataset where the file comes from
-  datasets_of_current_par <- files_metadata %>% 
-    filter(Endpoints %in% id) %>%
-    unique(datasets_id)
-  
-  # get the different names of the columns of the files downloaded
-  parseparameters <- files_metadata %>% 
-    filter(datasets_of_current_par %in% datasets_id) %>%
-    filter(par_id_to_dl %in% parameters_id)
-  
-  # get the time column and the column of the parameter wanted and change the column name
-  
-  # add the metadata of "files id", "dataset id", "lake name", "parse parameters name"
-  
-  # add up all the files downloaded together to have a final dataframe with all data from one parameter
-    
-}
-
+# ### Define base URL
+# # Base_URL <- "https://api.datalakes-eawag.ch/download/csv/"
+# base_url <- "https://api.datalakes-eawag.ch/download/"
+# remove duplicates of ids that are linked to license and other
+parameters <- parameters %>% filter(!grepl("license", name, ignore.case = TRUE))
+parameters <- parameters %>% filter(!grepl("GNU", name, ignore.case = TRUE))
+anyDuplicated(parameters$name)
 ######################################################################
-
-
-get_filetype <- function(file_id, files_metadata) {
-  files_metadata$filetype[files_metadata$id == file_id][1]
-}
-
-download_and_read_file <- function(file_id, files_metadata, base_url) {
+extract_nc_parameter <- function(
+    nc,
+    dataset_id,
+    par_id,
+    lake_parameters_summary,
+    parameters
+) {
   
-  filetype <- get_filetype(file_id, files_metadata)
-  if (is.na(filetype)) stop("Unknown filetype")
+  ## ---- 1. Parameter name ----
+  param_name <- parameters$name[parameters$id == par_id]
   
-  message("  ├─ File ", file_id, " (", filetype, ")")
+  if (length(param_name) == 0 || is.na(param_name)) return(NULL)
+  if (!param_name %in% names(nc$var)) return(NULL)
   
-  tryCatch({
+  ## ---- 2. Time dimension ----
+  if ("time" %in% names(nc$dim)) {
+    time_dim <- "time"
+  } else {
+    time_dim <- names(nc$dim)[
+      sapply(nc$dim, function(d) grepl("since", d$units))
+    ][1]
+  }
+  
+  if (is.na(time_dim)) return(NULL)
+  
+  time_vals  <- nc$dim[[time_dim]]$vals
+  origin <- sub(".*since ", "", nc$dim[[time_dim]]$units)
+  datetime <- as.POSIXct(time_vals, origin = origin, tz = "UTC")
+  
+  ## ---- 3. Extract variable & dimensions ----
+  vals <- ncvar_get(nc, param_name)
+  var_dims <- sapply(nc$var[[param_name]]$dim, `[[`, "name")
+  
+  ## ---- 4. Build dataframe ----
+  
+  # TIME ONLY
+  if (length(var_dims) == 1 && var_dims[1] == time_dim) {
     
-    resp <- request(paste0(base_url, file_id)) %>% req_perform()
+    df <- tibble(
+      datetime = datetime,
+      value    = vals
+    )
     
-    if (filetype == "nc") {
-      tmp <- tempfile(fileext = ".nc")
-      writeBin(resp$body, tmp)
-      nc <- nc_open(tmp)
-      return(list(success = TRUE, type = "nc", nc = nc, tmp = tmp))
-    }
+    # DEPTH x TIME
+  } else if (time_dim %in% var_dims && length(var_dims) == 2) {
     
-    stop("Unsupported filetype")
+    depth_dim <- setdiff(var_dims, time_dim)
+    depth_vals <- nc$dim[[depth_dim]]$vals
     
-  }, error = function(e) {
-    message("  │   ✗ FAILED")
-    list(success = FALSE)
-  })
-}
-
-extract_nc_parameter <- function(nc, dataset_id, par_id, lake_parameters_summary) {
+    df <- expand.grid(
+      depth    = depth_vals,
+      datetime = datetime
+    )
+    
+    df$value <- as.vector(vals)
+    
+  } else {
+    return(NULL)
+  }
   
-  time_axis <- lake_parameters_summary %>%
-    filter(
-      datasets_id == dataset_id,
-      parameters_id == 1,
-      parseparameter == "time"
-    ) %>%
-    pull(axis)
-  
-  value_axes <- lake_parameters_summary %>%
+  ## ---- 5. Attach axis (SAFE) ----
+  meta <- lake_parameters_summary %>%
     filter(
       datasets_id == dataset_id,
       parameters_id == par_id
-    )
+    ) %>%
+    select(axis, unit, parseparameter)
   
-  time_var <- time_axis[time_axis %in% names(nc$var)][1]
-  value_vars <- intersect(value_axes$axis, names(nc$var))
+  if (nrow(meta) > 0) {
+    df$axis <- meta$axis[1]
+  } else {
+    df$axis <- param_name
+    df$unit <- NA_character_
+    df$parseparameter <- NA_character_
+    return(df)
+  }
   
-  if (is.na(time_var) || length(value_vars) == 0) return(NULL)
+  ## ---- 6. Attach metadata ----
+  df <- df %>%
+    left_join(meta, by = "axis")
   
-  time <- ncvar_get(nc, time_var)
+  ## ---- 7. Final column order ----
+  final_cols <- c("datetime", "value", "axis", "unit", "parseparameter")
   
-  time_units <- ncatt_get(nc, time_var, "units")$value
-  origin <- sub(".*since ", "", time_units)
-  multiplier <- ifelse(grepl("days", time_units), 86400,
-                       ifelse(grepl("hours", time_units), 3600, 1))
+  if ("depth" %in% names(df)) {
+    final_cols <- c("datetime", "depth", "value", "axis", "unit", "parseparameter")
+  }
   
-  datetime <- as.POSIXct(time * multiplier, origin = origin, tz = "UTC")
+  df <- df %>% select(all_of(final_cols))
   
-  map_dfr(value_vars, function(v) {
-    tibble(
-      datetime = datetime,
-      value = ncvar_get(nc, v),
-      axis = v
-    )
-  }) %>%
-    left_join(value_axes, by = "axis")
+  return(df)
 }
+
+
 
 download_parameter_data <- function(
     par_id,
     base_url = "https://api.datalakes-eawag.ch/download/",
     files_metadata,
-    lake_parameters_summary
+    lake_parameters_summary,
+    parameters
 ) {
   
   datasets_id <- unique(
@@ -147,64 +133,86 @@ download_parameter_data <- function(
     ]
   )
   
-  failed_files <- integer()
   out <- list()
+  failed_files <- integer()
+  skipped_files <- integer()
   
   message("Starting download for parameter ", par_id)
   message("Found ", length(datasets_id), " datasets\n")
   
   for (d in datasets_id) {
-    
     message("▶ Dataset ", d)
     
-    files <- files_metadata$id[files_metadata$datasets_id == d]
+    files <- files_metadata %>%
+      filter(datasets_id == d) %>%
+      pull(id) %>%
+      unique() %>%
+      na.omit()
     message("  Files: ", length(files))
     
     for (f in files) {
+      filetype <- files_metadata %>%
+        filter(id == f) %>%
+        pull(filetype)
+      message("  ├─ File ", f, " (", filetype, ")")
       
-      res <- download_and_read_file(
-        file_id = f,
-        files_metadata = files_metadata,
-        base_url = base_url
-      )
+      res <- tryCatch({
+        resp <- request(paste0(base_url, f)) %>% req_perform()
+        list(resp = resp, type = filetype)
+      }, error = function(e) {
+        failed_files <<- c(failed_files, f)
+        message("  │   ✗ FAILED")
+        NULL
+      })
+      if (is.null(res)) next
       
-      if (!res$success) {
-        failed_files <- c(failed_files, f)
+      df <- NULL
+      if (filetype == "json") {
+        raw <- res$resp %>% resp_body_json()
+        df <- extract_json_parameter(raw, d, par_id, lake_parameters_summary)
+      }
+      
+      if (filetype == "nc") {
+        tmp <- tempfile(fileext = ".nc")
+        writeBin(res$resp$body, tmp)
+        nc <- ncdf4::nc_open(tmp)
+        df <- extract_nc_parameter(
+          nc,
+          d,
+          par_id,
+          lake_parameters_summary,
+          parameters
+        )
+        ncdf4::nc_close(nc)
+        unlink(tmp)
+      }
+      
+      if (is.null(df)) {
+        message("  │   ↷ skipped (parameter not present in file)")
+        skipped_files <- c(skipped_files, f)
         next
       }
       
-      if (res$type != "nc") next
-      
-      df <- extract_nc_parameter(
-        nc = res$nc,
-        dataset_id = d,
-        par_id = par_id,
-        lake_parameters_summary = lake_parameters_summary
-      )
-      
-      nc_close(res$nc)
-      unlink(res$tmp)
-      
-      if (!is.null(df)) {
-        df$file_id <- f
-        df$dataset_id <- d
-        out[[length(out) + 1]] <- df
-      }
+      df$file_id <- f
+      df$dataset_id <- d
+      df$filetype <- filetype
+      out[[length(out) + 1]] <- df
     }
     
     message("✔ Finished dataset ", d, "\n")
   }
   
   list(
-    data = bind_rows(out),
-    failed_files = unique(failed_files)
+    data = if(length(out) > 0) bind_rows(out) else tibble(),
+    failed_files = unique(failed_files),
+    skipped_files = unique(skipped_files)
   )
 }
 
 
-download_and_read_file(
-  file_id = 14,
+res_test <- download_parameter_data(
+  par_id = 14,
   files_metadata = files_metadata,
-  base_url = "https://api.datalakes-eawag.ch/download/"
+  lake_parameters_summary = lake_parameters_summary,
+  parameters = parameters
 )
-

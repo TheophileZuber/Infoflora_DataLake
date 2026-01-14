@@ -12,7 +12,7 @@ Base_URL <- "https://api.datalakes-eawag.ch"
 #' has several files. 
 
 ### request the metadata for files, datasets and the parameters available in files 
-Endpoints <- c("/datasets","/files/","/selectiontables")
+Endpoints <- c("/datasets","/files/","/selectiontables/parameters")
 
 for (i in Endpoints) {
   

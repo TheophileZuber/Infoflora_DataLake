@@ -307,3 +307,4 @@ library(openxlsx)
 
 # for writing a data.frame or list of data.frames to an xlsx file
 write.xlsx(Potential_parameters, 'results/list_of_potential_parameters.xlsx')
+save(Potential_parameters,file = 'results/list_of_potential_parameters.Rdata')
